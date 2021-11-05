@@ -61,6 +61,7 @@ async fn chat(
             state.n += 1;
             (Some(format!("Принял {}", state.n)), Some(id))
         }
+        Ok(HandleChat::Ignored(id)) => (Some("Проигнорированно".to_string()), Some(id)),
         Err(e @ Error::BadRegion { .. }) => (Some(e.to_string()), None),
         Err(e @ Error::BadTag(_)) => (Some(e.to_string()), None),
         Err(e) => {
@@ -97,6 +98,7 @@ enum HandleChat<'r, 't> {
         regions: Vec<&'r str>,
         tags: Vec<&'t str>,
     },
+    Ignored(i32),
 }
 
 async fn handle_chat<'t>(
@@ -169,13 +171,14 @@ async fn handle_chat<'t>(
     }
 
     let text = text.unwrap_or_default();
-    if text.len() < 20 {
+    if text.chars().count() < 20 {
         if let Regions::BadRegion { region, matches } = extract_regions(text) {
             return Err(Error::BadRegion {
                 region: region.into(),
                 matches,
             });
         }
+        return Ok(HandleChat::Ignored(message_id));
     }
 
     state.messages.push(db_utils::models::NewMessage {

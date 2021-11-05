@@ -1,6 +1,7 @@
 use crate::{ALLIAS_REGIONS, ALL_TAGS};
 use std::collections::HashSet;
 
+#[derive(Debug)]
 pub enum Regions<'t> {
     Regions(Vec<&'t str>),
     BadRegion {
