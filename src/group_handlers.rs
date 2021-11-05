@@ -21,7 +21,7 @@ impl Chat {
     pub fn new(client: Arc<Client>) -> Self {
         Self {
             client,
-            n: 1,
+            n: 0,
             messages: vec![],
         }
     }
@@ -57,7 +57,10 @@ async fn chat(
                 None,
             )
         }
-        Ok(HandleChat::Remembered(id)) => (Some(format!("Принял {}", state.n)), Some(id)),
+        Ok(HandleChat::Remembered(id)) => {
+            state.n += 1;
+            (Some(format!("Принял {}", state.n)), Some(id))
+        }
         Err(e @ Error::BadRegion { .. }) => (Some(e.to_string()), None),
         Err(e @ Error::BadTag(_)) => (Some(e.to_string()), None),
         Err(e) => {
@@ -84,7 +87,6 @@ async fn chat(
         _ => unreachable!(),
     }
 
-    state.n += 1;
     next(state)
 }
 
