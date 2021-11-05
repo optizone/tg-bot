@@ -1,0 +1,26 @@
+[package]
+name = "tg-bot"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+teloxide = { version = "0.5", features = ["macros", "auto-send"] }
+log = "0.4"
+pretty_env_logger = "0.4.0"
+tokio = { version =  "1.8", features = ["rt-multi-thread", "macros"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+lazy_static = "1"
+derive_more = "0.99"
+futures = "0.3"
+strum = { version = "0.22", features = ["derive"] }
+thiserror = "1"
+smartstring = { version = "0.2", features = ["serde"] }
+
+dotenv = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+mongodb = "2"
+bson = { version = "2", features = ["chrono-0_4"] }
+serde_json = "1"
