@@ -4,7 +4,7 @@ pub mod models;
 pub mod user;
 mod validate;
 
-pub use db::{get_chats, get_messages, get_regions, get_tags, insert_messages};
+pub use db::{get_chats, get_messages, get_regions, get_tags, insert_messages, migrate_chat};
 pub use validate::validate_db;
 
 pub(self) const DB_NAME: &str = "messages_db";

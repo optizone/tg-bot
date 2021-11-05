@@ -22,6 +22,38 @@ use super::{
     MESSAGES_COLLECTION_NAME,
 };
 
+pub async fn migrate_chat(client: &Client, from_id: i64, to_id: i64) -> DbResult<()> {
+    client
+        .database(DB_NAME)
+        .collection::<Document>(CHATS_COLLECTION_NAME)
+        .update_many(
+            bson::doc! {
+                "id": from_id
+            },
+            bson::doc! {
+                "$set": { "id": to_id }
+            },
+            None,
+        )
+        .await?;
+
+    client
+        .database(DB_NAME)
+        .collection::<Document>(MESSAGES_COLLECTION_NAME)
+        .update_many(
+            bson::doc! {
+                "chat_id": from_id,
+            },
+            bson::doc! {
+                "$set": { "chat_id": to_id }
+            },
+            None,
+        )
+        .await?;
+
+    Ok(())
+}
+
 pub async fn get_regions(client: &Client) -> DbResult<Vec<Region>> {
     let mut cursor = client
         .database(DB_NAME)

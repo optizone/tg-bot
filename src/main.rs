@@ -87,7 +87,15 @@ async fn run() {
     let mongo_client = unsafe { &*(&_mongo_client as *const Arc<_>) as &'static Arc<_> };
     std::mem::forget(_mongo_client);
 
-    teloxide::enable_logging!();
+    pretty_env_logger::formatted_timed_builder()
+        .write_style(pretty_env_logger::env_logger::WriteStyle::Auto)
+        .filter(
+            Some(&env!("CARGO_PKG_NAME").replace("-", "_")),
+            log::LevelFilter::Trace,
+        )
+        .filter(Some("teloxide"), log::LevelFilter::Info)
+        .format_timestamp_secs()
+        .init();
     log::info!("Starting bot");
 
     db_utils::validate_db(&mongo_client).await.unwrap();
@@ -179,6 +187,35 @@ async fn run() {
         let text = cx.update.text();
         let private = chat.is_private();
         let chat_in_table = ALL_CHATS.read().await.contains(&cx.chat_id());
+
+        if cx.update.super_group_chat_created().is_some() {
+            log::trace!(
+                "Super chat created: \"{}\". Migrate from: {}. Migrate to: {}",
+                chat.title().unwrap_or_default(),
+                cx.update.migrate_from_chat_id().unwrap_or_default(),
+                cx.update.migrate_to_chat_id().unwrap_or_default()
+            );
+            match (
+                cx.update.migrate_from_chat_id(),
+                cx.update.migrate_to_chat_id(),
+            ) {
+                (Some(from_id), Some(to_id)) => {
+                    if let Err(e) = db_utils::migrate_chat(mongo_client, from_id, to_id).await {
+                        log::error!(
+                            "Can't migrate chat from {} to {}. Error: {}",
+                            from_id,
+                            to_id,
+                            e.to_string()
+                        )
+                    }
+                }
+                (None, Some(_)) => log::error!("Cant migrate to superchat: from_id isn't set"),
+                (Some(_), None) => log::error!("Cant migrate to superchat: to_id isn't set"),
+                (None, None) => {
+                    log::error!("Cant migrate to superchat: from_id and to_id isn't set")
+                }
+            }
+        }
 
         if private {
             log::trace!(
