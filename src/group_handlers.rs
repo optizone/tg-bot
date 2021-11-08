@@ -171,7 +171,7 @@ async fn handle_chat<'t>(
     }
 
     let text = text.unwrap_or_default();
-    if text.chars().count() < 20 {
+    if text.chars().count() < 20 && text != "" {
         if let Regions::BadRegion { region, matches } = extract_regions(text) {
             return Err(Error::BadRegion {
                 region: region.into(),
