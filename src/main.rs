@@ -87,69 +87,49 @@ async fn run() {
     let mongo_client = unsafe { &*(&_mongo_client as *const Arc<_>) as &'static Arc<_> };
     std::mem::forget(_mongo_client);
 
-    pretty_env_logger::formatted_timed_builder()
-        .write_style(pretty_env_logger::env_logger::WriteStyle::Auto)
-        .filter(
-            Some(&env!("CARGO_PKG_NAME").replace("-", "_")),
-            log::LevelFilter::Trace,
-        )
-        .filter(Some("teloxide"), log::LevelFilter::Info)
-        .format_timestamp_secs()
-        .init();
+    log4rs::init_file("log4rs.yml", Default::default()).unwrap();
     log::info!("Starting bot");
 
     db_utils::validate_db(&mongo_client).await.unwrap();
 
     let (all_regions, alias_regions) = {
-        let mut regions = db_utils::get_regions(&mongo_client)
+        let regions = db_utils::get_regions(&mongo_client)
             .await
             .expect("Can't access regions. Bad response from server");
-        for r in &mut regions {
-            r.aliases.iter_mut().for_each(|a| *a = a.to_lowercase());
-        }
+        let regions = regions
+            .into_iter()
+            .map(|mut r| {
+                r.aliases.iter_mut().for_each(|a| *a = a.to_lowercase());
+                r.aliases.push(r.region.clone());
 
-        let res = unsafe {
-            (
-                regions
-                    .iter()
-                    .map(|r| &*(r.region.as_str() as *const str) as &'static str)
-                    .collect::<HashSet<_>>(),
-                regions
-                    .iter()
-                    .map(|r| {
-                        let mut a = r
-                            .aliases
-                            .iter()
-                            .map(|a| {
-                                (
-                                    &*(a.as_str() as *const str) as &'static str,
-                                    &*(r.region.as_str() as *const str) as &'static str,
-                                )
-                            })
-                            .collect::<Vec<_>>();
-                        a.push((
-                            &*(r.region.as_str() as *const str) as &'static str,
-                            &*(r.region.as_str() as *const str) as &'static str,
-                        ));
-                        a
-                    })
-                    .collect::<Vec<_>>()
+                let aliases = r
+                    .aliases
                     .into_iter()
-                    .flatten()
-                    .collect::<HashMap<_, _>>(),
-            )
-        };
-        let (a, b) = &res;
-        let res2 = unsafe {
-            (
-                &*(a as *const HashSet<&str>),
-                &*(b as *const HashMap<&str, &str>),
-            )
-        };
-        std::mem::forget(regions);
-        std::mem::forget(res);
+                    .map(|a| Box::leak(Box::new(a)))
+                    .collect::<Vec<_>>();
 
-        res2
+                let region = Box::leak(Box::new(r.region));
+                (region, aliases)
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(r, a)| {
+                (
+                    r.as_str(),
+                    a.into_iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let re = regions.iter().map(|&(r, _)| r).collect::<HashSet<_>>();
+        let al = regions
+            .iter()
+            .map(|(r, a)| a.iter().map(|&a| (a, *r)).collect::<Vec<_>>())
+            .collect::<Vec<_>>()
+            .into_iter()
+            .flatten()
+            .collect::<HashMap<_, _>>();
+
+        (Box::leak(Box::new(re)), Box::leak(Box::new(al)))
     };
 
     {
@@ -172,10 +152,10 @@ async fn run() {
                 tags.insert(&*(t.as_str() as *const str) as &'static str);
                 std::mem::forget(t);
             });
-        alias_regions.into_iter().for_each(|(k, v)| {
+        alias_regions.iter().for_each(|(&k, &v)| {
             al.insert(k, v);
         });
-        all_regions.into_iter().for_each(|v| {
+        all_regions.iter().for_each(|&v| {
             all.insert(v);
         });
     }
@@ -218,7 +198,7 @@ async fn run() {
         }
 
         if private {
-            log::trace!(
+            log::info!(
                 "Username: \"{}\". User id: {}. Text: \"{}\"",
                 cx.update
                     .from()
@@ -231,7 +211,7 @@ async fn run() {
                 text.unwrap_or_default()
             );
         } else {
-            log::trace!(
+            log::info!(
                 "Chat title: \"{}\". Chat id: {}. Text: \"{}\"",
                 chat.title().unwrap_or_default(),
                 chat.id,
