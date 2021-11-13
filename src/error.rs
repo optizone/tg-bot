@@ -20,7 +20,15 @@ pub enum Error {
         duration: Duration,
         tags: Vec<String>,
     },
-    #[error("Непонятный тег \"{0}\". Допустимые теги: [ {} ]", ALL_TAGS.read().unwrap().iter().copied().collect::<Vec<_>>().join(", "))]
+    #[error("Непонятный тег \"{0}\". Допустимые теги: [ {} ]", 
+        ALL_TAGS
+            .read()
+            .map_err(|e| log::error!("Can't lock ALL_TAGS. Error: {}", e.to_string()))
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>()
+            .join(", "))]
     BadTag(String),
     #[error("{0}")]
     ServerError(#[from] ServerError),

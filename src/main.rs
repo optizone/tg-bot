@@ -7,15 +7,15 @@ use group_handlers::Chat;
 use mongodb::{options::ClientOptions, Client};
 use private_handlers::Private;
 use std::sync::RwLock;
-use teloxide::prelude::*;
+use teloxide::{prelude::*, types::MessageKind, RequestError};
 use tokio::sync::Mutex;
 
 use derive_more::From;
 use teloxide::macros::Transition;
 
+mod common;
 mod db_utils;
 mod error;
-mod extractors;
 mod group_handlers;
 mod private_handlers;
 
@@ -60,11 +60,13 @@ lazy_static::lazy_static! {
 }
 
 async fn run() {
-    dotenv::dotenv().unwrap();
+    dotenv::dotenv().expect("Can't access .env file");
 
-    let mut options = ClientOptions::parse(std::env::var("MONGODB_URI").unwrap())
-        .await
-        .unwrap();
+    let mut options = ClientOptions::parse(
+        std::env::var("MONGODB_URI").expect("MONGODB_URI enviroment variable must be set!"),
+    )
+    .await
+    .expect("Can't parse MONGODB_URI as ClientOptions");
 
     // options.credential = Some(
     //     Credential::builder()
@@ -76,21 +78,26 @@ async fn run() {
     //         .build(),
     // );
 
-    options.min_pool_size = std::env::var("MONGODB_POLL_MIN_CONNECTIONS")
-        .ok()
-        .map(|s| s.parse().unwrap());
-    options.max_pool_size = std::env::var("MONGODB_POLL_MAX_CONNECTIONS")
-        .ok()
-        .map(|s| s.parse().unwrap());
+    options.min_pool_size = std::env::var("MONGODB_POLL_MIN_CONNECTIONS").ok().map(|s| {
+        s.parse()
+            .expect("Can't parse MONGODB_POLL_MIN_CONNECTIONS as u32")
+    });
+    options.max_pool_size = std::env::var("MONGODB_POLL_MAX_CONNECTIONS").ok().map(|s| {
+        s.parse()
+            .expect("Can't parse MONGODB_POLL_MAX_CONNECTIONS as u32")
+    });
 
-    let _mongo_client = Arc::new(Client::with_options(options).expect("failed to connect"));
-    let mongo_client = unsafe { &*(&_mongo_client as *const Arc<_>) as &'static Arc<_> };
-    std::mem::forget(_mongo_client);
+    let mongo_client = Box::leak(Box::new(Arc::new(
+        Client::with_options(options).expect("failed to connect to mongodb"),
+    ))) as &'static Arc<_>;
 
-    log4rs::init_file("log4rs.yml", Default::default()).unwrap();
+    log4rs::init_file("log4rs.yml", Default::default())
+        .expect("Can't init logger from file log4rs.yml");
     log::info!("Starting bot");
 
-    db_utils::validate_db(&mongo_client).await.unwrap();
+    db_utils::validate_db(&mongo_client)
+        .await
+        .expect("Can't validate database");
 
     let (all_regions, alias_regions) = {
         let regions = db_utils::get_regions(&mongo_client)
@@ -133,24 +140,32 @@ async fn run() {
     };
 
     {
-        let mut al = ALLIAS_REGIONS.write().unwrap();
-        let mut all = ALL_REGIONS.write().unwrap();
-        let mut tags = ALL_TAGS.write().unwrap();
+        let mut al = ALLIAS_REGIONS
+            .write()
+            .map_err(|e| log::error!("Can't lock ALLIAS_REGIONS. Error: {}", e.to_string()))
+            .unwrap();
+        let mut all = ALL_REGIONS
+            .write()
+            .map_err(|e| log::error!("Can't lock ALL_REGIONS. Error: {}", e.to_string()))
+            .unwrap();
+        let mut tags = ALL_TAGS
+            .write()
+            .map_err(|e| log::error!("Can't lock ALL_TAGS. Error: {}", e.to_string()))
+            .unwrap();
         let mut chats = ALL_CHATS.write().await;
-        db_utils::get_chats(&mongo_client)
+        db_utils::get_chats(mongo_client)
             .await
             .expect("Can't access chats. Bad response from server.")
             .into_iter()
             .for_each(|c| {
                 chats.insert(c);
             });
-        db_utils::get_tags(&mongo_client)
+        db_utils::get_tags(mongo_client)
             .await
             .expect("Can't access tags. Bad response from server.")
             .into_iter()
-            .for_each(|t| unsafe {
-                tags.insert(&*(t.as_str() as *const str) as &'static str);
-                std::mem::forget(t);
+            .for_each(|t| {
+                tags.insert(Box::leak(Box::new(t)).as_str() as &'static str);
             });
         alias_regions.iter().for_each(|(&k, &v)| {
             al.insert(k, v);
@@ -163,51 +178,63 @@ async fn run() {
     let bot = Bot::from_env().auto_send();
 
     teloxide::dialogues_repl(bot, move |cx, dialogue: Dialogue| async move {
-        let chat = cx.requester.get_chat(cx.chat_id()).await.unwrap();
+        let chat = cx
+            .requester
+            .get_chat(cx.chat_id())
+            .await
+            .map_err(|e| log::error!("Can't get chat from context. Error: {}", e.to_string()))
+            .unwrap();
         let text = cx.update.text();
         let private = chat.is_private();
         let chat_in_table = ALL_CHATS.read().await.contains(&cx.chat_id());
 
-        if cx.update.super_group_chat_created().is_some() {
-            log::trace!(
-                "Super chat created: \"{}\". Migrate from: {}. Migrate to: {}",
-                chat.title().unwrap_or_default(),
-                cx.update.migrate_from_chat_id().unwrap_or_default(),
-                cx.update.migrate_to_chat_id().unwrap_or_default()
-            );
-            match (
-                cx.update.migrate_from_chat_id(),
-                cx.update.migrate_to_chat_id(),
-            ) {
-                (Some(from_id), Some(to_id)) => {
-                    if let Err(e) = db_utils::migrate_chat(mongo_client, from_id, to_id).await {
-                        log::error!(
-                            "Can't migrate chat from {} to {}. Error: {}",
-                            from_id,
-                            to_id,
-                            e.to_string()
-                        )
-                    }
+        match cx.update.kind {
+            MessageKind::Common(_) => {}
+            MessageKind::Migrate(m) => {
+                log::trace!(
+                    "Super chat created: \"{}\". Migrate from: {}. Migrate to: {}",
+                    chat.title().unwrap_or_default(),
+                    m.migrate_from_chat_id,
+                    m.migrate_to_chat_id
+                );
+                if let Err(e) = db_utils::migrate_chat(
+                    mongo_client,
+                    m.migrate_from_chat_id,
+                    m.migrate_to_chat_id,
+                )
+                .await
+                {
+                    log::error!(
+                        "Can't migrate chat from {} to {}. Error: {}",
+                        m.migrate_from_chat_id,
+                        m.migrate_to_chat_id,
+                        e.to_string()
+                    )
                 }
-                (None, Some(_)) => log::error!("Cant migrate to superchat: from_id isn't set"),
-                (Some(_), None) => log::error!("Cant migrate to superchat: to_id isn't set"),
-                (None, None) => {
-                    log::error!("Cant migrate to superchat: from_id and to_id isn't set")
-                }
+                return next::<_, _, RequestError>(dialogue)
+                    .map_err(|e| log::error!("Error while skipping message: {}", e.to_string()))
+                    .unwrap();
+            }
+            m => {
+                log::debug!("Unhandlable message: {:?}", m);
+                return next::<_, _, RequestError>(dialogue)
+                    .map_err(|e| log::error!("Error while skipping message: {}", e.to_string()))
+                    .unwrap();
             }
         }
 
         if private {
+            let (username, id) = match cx.update.from() {
+                Some(u) => (u.username.as_ref().map(|s| s.as_str()).unwrap_or(""), u.id),
+                None => {
+                    log::error!("Can't access `from` from update");
+                    ("", 0)
+                }
+            };
             log::info!(
                 "Username: \"{}\". User id: {}. Text: \"{}\"",
-                cx.update
-                    .from()
-                    .as_ref()
-                    .unwrap()
-                    .username
-                    .as_ref()
-                    .unwrap_or(&String::new()),
-                cx.update.from().unwrap().id,
+                username,
+                id,
                 text.unwrap_or_default()
             );
         } else {
@@ -221,27 +248,87 @@ async fn run() {
         match (private, &dialogue) {
             (true, Dialogue::Echo(_)) => Dialogue::from(Private::new(
                 Arc::clone(mongo_client),
-                cx.update.from().unwrap().id,
+                match cx.update.from() {
+                    Some(u) => u.id,
+                    None => {
+                        log::error!("Can't access `from` from update, panicing...");
+                        panic!()
+                    }
+                },
             ))
             .react(cx, String::new())
             .await
+            .map_err(|e| {
+                log::error!(
+                    "Error while reacting update [{file}/{line}]: {err}",
+                    err = e.to_string(),
+                    file = file!(),
+                    line = line!(),
+                )
+            })
             .unwrap(),
-            (false, Dialogue::Echo(_)) if !chat_in_table => {
-                dialogue.react(cx, String::new()).await.unwrap()
-            }
+            (false, Dialogue::Echo(_)) if !chat_in_table => dialogue
+                .react(cx, String::new())
+                .await
+                .map_err(|e| {
+                    log::error!(
+                        "Error while reacting update [{file}/{line}]: {err}",
+                        err = e.to_string(),
+                        file = file!(),
+                        line = line!(),
+                    )
+                })
+                .unwrap(),
             (false, Dialogue::Echo(_)) if chat_in_table => {
                 Dialogue::from(Chat::new(Arc::clone(mongo_client)))
                     .react(cx, String::new())
                     .await
+                    .map_err(|e| {
+                        log::error!(
+                            "Error while reacting update [{file}/{line}]: {err}",
+                            err = e.to_string(),
+                            file = file!(),
+                            line = line!(),
+                        )
+                    })
                     .unwrap()
             }
-            (true, Dialogue::Private(_)) => dialogue.react(cx, String::new()).await.unwrap(),
-            (false, Dialogue::Chat(_)) if chat_in_table => {
-                dialogue.react(cx, String::new()).await.unwrap()
-            }
-            (false, Dialogue::Chat(_)) if !chat_in_table => {
-                Dialogue::from(Echo).react(cx, String::new()).await.unwrap()
-            }
+            (true, Dialogue::Private(_)) => dialogue
+                .react(cx, String::new())
+                .await
+                .map_err(|e| {
+                    log::error!(
+                        "Error while reacting update [{file}/{line}]: {err}",
+                        err = e.to_string(),
+                        file = file!(),
+                        line = line!(),
+                    )
+                })
+                .unwrap(),
+            (false, Dialogue::Chat(_)) if chat_in_table => dialogue
+                .react(cx, String::new())
+                .await
+                .map_err(|e| {
+                    log::error!(
+                        "Error while reacting update [{file}/{line}]: {err}",
+                        err = e.to_string(),
+                        file = file!(),
+                        line = line!(),
+                    )
+                })
+                .unwrap(),
+            (false, Dialogue::Chat(_)) if !chat_in_table => Dialogue::from(Echo)
+                .react(cx, String::new())
+                .await
+                .map_err(|e| {
+                    log::error!(
+                        "Error while reacting update [{file}/{line}]: {err}",
+                        err = e.to_string(),
+                        file = file!(),
+                        line = line!(),
+                    )
+                })
+                .unwrap(),
             _ => unreachable!(),
         }
     })

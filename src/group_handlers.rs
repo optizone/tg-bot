@@ -1,4 +1,4 @@
-use crate::{db_utils, extractors::*};
+use crate::{common::*, db_utils};
 use crate::{error::Error, Dialogue, ALLIAS_REGIONS, ALL_REGIONS, ALL_TAGS};
 use mongodb::Client;
 use std::sync::Arc;
@@ -134,10 +134,13 @@ async fn handle_chat<'t>(
     };
 
     if let Some(regions) = regions {
-        if regions
-            .iter()
-            .all(|region| ALLIAS_REGIONS.read().unwrap().contains_key(*region))
-        {
+        if regions.iter().all(|region| {
+            ALLIAS_REGIONS
+                .read()
+                .map_err(|e| log::error!("Can't lock ALIAS_REGIONS. Error: {}", e.to_string()))
+                .unwrap()
+                .contains_key(*region)
+        }) {
             let messages = &mut state.messages;
             let n_messages = messages.len();
             if !messages.is_empty() {
@@ -150,8 +153,16 @@ async fn handle_chat<'t>(
                         .map(|&t| t.into())
                         .collect();
                 });
-                let all_regions = ALL_REGIONS.read().unwrap().clone();
-                let all_tags = ALL_TAGS.read().unwrap().clone();
+                let all_regions = ALL_REGIONS
+                    .read()
+                    .map_err(|e| log::error!("Can't lock ALL_REGIONS. Error: {}", e.to_string()))
+                    .unwrap()
+                    .clone();
+                let all_tags = ALL_TAGS
+                    .read()
+                    .map_err(|e| log::error!("Can't lock ALL_TAGS. Error: {}", e.to_string()))
+                    .unwrap()
+                    .clone();
                 let r = db_utils::insert_messages(
                     &state.client,
                     &all_regions,

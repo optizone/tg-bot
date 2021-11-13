@@ -15,9 +15,9 @@ lazy_static::lazy_static! {
 }
 
 use crate::{
+    common::*,
     db_utils::{self, models::UserGroup},
     error::Error,
-    extractors::*,
     Dialogue,
 };
 
@@ -27,31 +27,6 @@ pub struct Private(db_utils::user::User);
 impl Private {
     pub fn new(client: Arc<Client>, id: i64) -> Self {
         Self(db_utils::user::User::new(id, client))
-    }
-}
-
-async fn send_str(cx: &TransitionIn<AutoSend<Bot>>, str: &str) {
-    while let Err(teloxide::RequestError::RetryAfter(secs)) = cx.answer(str).await {
-        tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
-    }
-}
-
-async fn send_messages(
-    cx: &TransitionIn<AutoSend<Bot>>,
-    messages: Vec<db_utils::models::Message>,
-    with_id: bool,
-) {
-    for message in messages {
-        if with_id {
-            send_str(cx, message._id.to_hex().as_str()).await;
-        }
-        while let Err(teloxide::RequestError::RetryAfter(secs)) = cx
-            .requester
-            .forward_message(cx.chat_id(), message.chat_id, message.message_id)
-            .await
-        {
-            tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
-        }
     }
 }
 
@@ -202,7 +177,13 @@ async fn private(
                 .map(|d| d.with_timezone(&chrono::Utc));
             if let Ok(date) = date {
                 let start = date;
-                let end = start.checked_add_signed(chrono::Duration::days(1)).unwrap();
+                let end = match start.checked_add_signed(chrono::Duration::days(1)) {
+                    Some(d) => d,
+                    None => {
+                        log::error!("Error while substracting duration, paniking...",);
+                        panic!();
+                    }
+                };
                 match state
                     .0
                     .list_messages(vec![], vec![], Some(start), Some(end))
@@ -278,12 +259,14 @@ async fn private(
                 .nth(0)
                 .unwrap_or("+03")
                 .parse::<i32>()
+                .map_err(|e| log::error!("Error while parsing integer: {}", e.to_string()))
                 .unwrap();
             let minuts = zone
                 .split(':')
                 .nth(1)
                 .unwrap_or("00")
                 .parse::<i32>()
+                .map_err(|e| log::error!("Error while parsing integer: {}", e.to_string()))
                 .unwrap();
             let secs = hours * 60 * 60 + hours.signum() * minuts * 60;
             let offset = chrono::FixedOffset::east(secs);
@@ -374,12 +357,11 @@ async fn handle_private(
     let (regions, duration, tags) = match GET_REGEX.captures(text) {
         Some(c) => (
             c.name("regions").map(|r| r.as_str()),
-            c.name("duration").map(|d| {
-                match d.as_str().split_whitespace().next().unwrap().parse::<u64>() {
+            c.name("duration")
+                .map(|d| match d.as_str().trim().parse::<u64>() {
                     Ok(hours) => Ok(Duration::hours(hours as i64)),
                     Err(e) => Err(e),
-                }
-            }),
+                }),
             c.name("tags").map(|t| t.as_str()),
         ),
         None => (None, None, None),
