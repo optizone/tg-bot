@@ -80,10 +80,7 @@ async fn private(
                     .await
                     .map(|_| format!("Добавил пользователя с id {}", id))
                     .unwrap_or_else(|e| {
-                        format!(
-                            "не получилось добавить пользователя. Ошибка: {}",
-                            e.to_string()
-                        )
+                        format!("не получилось добавить пользователя. Ошибка: {}", e)
                     });
                 send_str(&cx, r.as_str()).await;
             }
@@ -103,10 +100,7 @@ async fn private(
                     .await
                     .map(|_| format!("Удалил пользователя с id {}", id))
                     .unwrap_or_else(|e| {
-                        format!(
-                            "не получилось удалить пользователя. Ошибка: {}",
-                            e.to_string()
-                        )
+                        format!("не получилось удалить пользователя. Ошибка: {}", e)
                     });
                 send_str(&cx, r.as_str()).await;
             }
@@ -139,9 +133,7 @@ async fn private(
                     .add_chat(id)
                     .await
                     .map(|_| format!("Добавил чат с id {}", id))
-                    .unwrap_or_else(|e| {
-                        format!("Не получилось добавить чат. Ошибка: {}", e.to_string())
-                    });
+                    .unwrap_or_else(|e| format!("Не получилось добавить чат. Ошибка: {}", e));
                 send_str(&cx, r.as_str()).await;
             }
         } else if let Some(del_user) = c.name("del_chat").map(|m| m.as_str()) {
@@ -159,9 +151,7 @@ async fn private(
                     .delete_chat(id)
                     .await
                     .map(|_| format!("Удалил чат с id {}", id))
-                    .unwrap_or_else(|e| {
-                        format!("не получилось удалить чат. Ошибка: {}", e.to_string())
-                    });
+                    .unwrap_or_else(|e| format!("не получилось удалить чат. Ошибка: {}", e));
                 send_str(&cx, r.as_str()).await;
             }
         } else if let Some(listdb) = c.name("listdb").map(|m| m.as_str()) {
@@ -223,9 +213,7 @@ async fn private(
                     .delete_message(id)
                     .await
                     .map(|_| format!("Удалил сообщение с id {}", id))
-                    .unwrap_or_else(|e| {
-                        format!("Не получилось удалить сообщение. Ошибка: {}", e.to_string())
-                    });
+                    .unwrap_or_else(|e| format!("Не получилось удалить сообщение. Ошибка: {}", e));
                 send_str(&cx, r.as_str()).await;
             } else {
                 send_str(&cx, "Непонятный id").await;
@@ -239,15 +227,13 @@ async fn private(
             if let Ok(days) = days {
                 let before = chrono::Utc::now()
                     .checked_sub_signed(chrono::Duration::days(days as i64))
-                    .unwrap();
+                    .unwrap_or_else(chrono::Utc::now);
                 let r = state
                     .0
                     .delete_messages_period(None, Some(before))
                     .await
                     .map(|_| format!("Удалил все сообщения до {}", before))
-                    .unwrap_or_else(|e| {
-                        format!("Не получилось удалить сообщения. Ошибка: {}", e.to_string())
-                    });
+                    .unwrap_or_else(|e| format!("Не получилось удалить сообщения. Ошибка: {}", e));
                 send_str(&cx, r.as_str()).await;
             } else {
                 send_str(&cx, "Непонятное количество дней").await;
@@ -259,14 +245,14 @@ async fn private(
                 .nth(0)
                 .unwrap_or("+03")
                 .parse::<i32>()
-                .map_err(|e| log::error!("Error while parsing integer: {}", e.to_string()))
+                .map_err(|e| log::error!("Error while parsing integer: {}", e))
                 .unwrap();
             let minuts = zone
                 .split(':')
                 .nth(1)
                 .unwrap_or("00")
                 .parse::<i32>()
-                .map_err(|e| log::error!("Error while parsing integer: {}", e.to_string()))
+                .map_err(|e| log::error!("Error while parsing integer: {}", e))
                 .unwrap();
             let secs = hours * 60 * 60 + hours.signum() * minuts * 60;
             let offset = chrono::FixedOffset::east(secs);
@@ -292,7 +278,7 @@ async fn private(
                     )
                 }
                 Err(e) => {
-                    format!("Не получилось выполнить команду. Ошибка: {}", e.to_string())
+                    format!("Не получилось выполнить команду. Ошибка: {}", e)
                 }
             };
 
@@ -316,7 +302,7 @@ async fn private(
         Err(e) => {
             send_str(
                 &cx,
-                format!("Не получилось выполнить команду. Ошибка: {}", e.to_string()).as_str(),
+                format!("Не получилось выполнить команду. Ошибка: {}", e).as_str(),
             )
             .await;
             return next(state);

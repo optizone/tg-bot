@@ -142,15 +142,15 @@ async fn run() {
     {
         let mut al = ALLIAS_REGIONS
             .write()
-            .map_err(|e| log::error!("Can't lock ALLIAS_REGIONS. Error: {}", e.to_string()))
+            .map_err(|e| log::error!("Can't lock ALLIAS_REGIONS. Error: {}", e))
             .unwrap();
         let mut all = ALL_REGIONS
             .write()
-            .map_err(|e| log::error!("Can't lock ALL_REGIONS. Error: {}", e.to_string()))
+            .map_err(|e| log::error!("Can't lock ALL_REGIONS. Error: {}", e))
             .unwrap();
         let mut tags = ALL_TAGS
             .write()
-            .map_err(|e| log::error!("Can't lock ALL_TAGS. Error: {}", e.to_string()))
+            .map_err(|e| log::error!("Can't lock ALL_TAGS. Error: {}", e))
             .unwrap();
         let mut chats = ALL_CHATS.write().await;
         db_utils::get_chats(mongo_client)
@@ -178,12 +178,15 @@ async fn run() {
     let bot = Bot::from_env().auto_send();
 
     teloxide::dialogues_repl(bot, move |cx, dialogue: Dialogue| async move {
-        let chat = cx
-            .requester
-            .get_chat(cx.chat_id())
-            .await
-            .map_err(|e| log::error!("Can't get chat from context. Error: {}", e.to_string()))
-            .unwrap();
+        let chat = match cx.requester.get_chat(cx.chat_id()).await {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("Can't get chat from context. Error: {}", e);
+                return next::<_, _, RequestError>(dialogue)
+                    .map_err(|e| log::error!("Error while skipping message: {}", e))
+                    .unwrap();
+            }
+        };
         let text = cx.update.text();
         let private = chat.is_private();
         let chat_in_table = ALL_CHATS.read().await.contains(&cx.chat_id());
@@ -208,17 +211,17 @@ async fn run() {
                         "Can't migrate chat from {} to {}. Error: {}",
                         m.migrate_from_chat_id,
                         m.migrate_to_chat_id,
-                        e.to_string()
+                        e
                     )
                 }
                 return next::<_, _, RequestError>(dialogue)
-                    .map_err(|e| log::error!("Error while skipping message: {}", e.to_string()))
+                    .map_err(|e| log::error!("Error while skipping message: {}", e))
                     .unwrap();
             }
             m => {
                 log::debug!("Unhandlable message: {:?}", m);
                 return next::<_, _, RequestError>(dialogue)
-                    .map_err(|e| log::error!("Error while skipping message: {}", e.to_string()))
+                    .map_err(|e| log::error!("Error while skipping message: {}", e))
                     .unwrap();
             }
         }
@@ -251,8 +254,8 @@ async fn run() {
                 match cx.update.from() {
                     Some(u) => u.id,
                     None => {
-                        log::error!("Can't access `from` from update, panicing...");
-                        panic!()
+                        log::error!("Can't access `from` from update, terminating...");
+                        std::process::exit(1)
                     }
                 },
             ))
@@ -260,8 +263,8 @@ async fn run() {
             .await
             .map_err(|e| {
                 log::error!(
-                    "Error while reacting update [{file}/{line}]: {err}",
-                    err = e.to_string(),
+                    "Error while reacting to an update [{file}/{line}]: {err}",
+                    err = e,
                     file = file!(),
                     line = line!(),
                 )
@@ -272,8 +275,8 @@ async fn run() {
                 .await
                 .map_err(|e| {
                     log::error!(
-                        "Error while reacting update [{file}/{line}]: {err}",
-                        err = e.to_string(),
+                        "Error while reacting to an update [{file}/{line}]: {err}",
+                        err = e,
                         file = file!(),
                         line = line!(),
                     )
@@ -285,8 +288,8 @@ async fn run() {
                     .await
                     .map_err(|e| {
                         log::error!(
-                            "Error while reacting update [{file}/{line}]: {err}",
-                            err = e.to_string(),
+                            "Error while reacting to an update [{file}/{line}]: {err}",
+                            err = e,
                             file = file!(),
                             line = line!(),
                         )
@@ -298,8 +301,8 @@ async fn run() {
                 .await
                 .map_err(|e| {
                     log::error!(
-                        "Error while reacting update [{file}/{line}]: {err}",
-                        err = e.to_string(),
+                        "Error while reacting to an update [{file}/{line}]: {err}",
+                        err = e,
                         file = file!(),
                         line = line!(),
                     )
@@ -310,8 +313,8 @@ async fn run() {
                 .await
                 .map_err(|e| {
                     log::error!(
-                        "Error while reacting update [{file}/{line}]: {err}",
-                        err = e.to_string(),
+                        "Error while reacting to an update [{file}/{line}]: {err}",
+                        err = e,
                         file = file!(),
                         line = line!(),
                     )
@@ -322,8 +325,8 @@ async fn run() {
                 .await
                 .map_err(|e| {
                     log::error!(
-                        "Error while reacting update [{file}/{line}]: {err}",
-                        err = e.to_string(),
+                        "Error while reacting to an update [{file}/{line}]: {err}",
+                        err = e,
                         file = file!(),
                         line = line!(),
                     )

@@ -327,9 +327,9 @@ pub async fn stat(client: &Client, offset: chrono::offset::FixedOffset) -> DbRes
     let secs = offset.local_minus_utc();
     let today = Utc::today()
         .and_time(NaiveTime::from_hms(0, 0, 0))
-        .unwrap()
+        .unwrap_or_else(Utc::now)
         .checked_sub_signed(chrono::Duration::seconds(secs as i64))
-        .unwrap();
+        .unwrap_or_else(Utc::now);
     let yesterday = {
         let a = today.checked_sub_signed(Duration::days(1)).unwrap();
         let b = today.clone();
