@@ -61,7 +61,7 @@ async fn chat(
             state.n += 1;
             (Some(format!("Принял {}", state.n)), Some(id))
         }
-        Ok(HandleChat::Ignored(id)) => (Some("Проигнорированно".to_string()), Some(id)),
+        Ok(HandleChat::Ignored(id)) => (Some("⚠️Проигнорированно⚠️".to_string()), Some(id)),
         Err(e @ Error::BadRegion { .. }) => (Some(e.to_string()), None),
         Err(e @ Error::BadTag(_)) => (Some(e.to_string()), None),
         Err(e) => {

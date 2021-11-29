@@ -328,11 +328,17 @@ async fn private(
                 send_str(&cx, format!("Регион: РФ").as_str()).await;
                 send_messages(&cx, messages.clone(), false).await;
             }
+            while let Err(teloxide::RequestError::RetryAfter(secs)) =
+                cx.reply_to("🏁 Результаты по запросу").await
+            {
+                tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
+            }
         }
         _Message::String(string) => {
             send_str(&cx, string.as_str()).await;
         }
     }
+
     next(state)
 }
 
@@ -400,6 +406,58 @@ async fn handle_private(
         m.regions
             .iter()
             .for_each(|r| res.entry(r.clone()).or_default().push(m.clone()))
+    });
+    struct Tag(&'static str);
+    impl std::cmp::Ord for Tag {
+        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+            match (self.0.chars().next(), other.0.chars().next()) {
+                (Some('ч'), Some('ч')) => std::cmp::Ordering::Equal,
+                (Some('ч'), Some(_)) => std::cmp::Ordering::Less,
+
+                (Some('п'), Some('ч')) => std::cmp::Ordering::Greater,
+                (Some('п'), Some('п')) => std::cmp::Ordering::Equal,
+                (Some('п'), Some(_)) => std::cmp::Ordering::Less,
+
+                (Some('у'), Some('у')) => std::cmp::Ordering::Equal,
+                (Some('у'), Some('с')) => std::cmp::Ordering::Less,
+                (Some('у'), Some(_)) => std::cmp::Ordering::Greater,
+
+                (Some('с'), Some('с')) => std::cmp::Ordering::Equal,
+                (Some('с'), Some(_)) => std::cmp::Ordering::Greater,
+
+                _ => std::cmp::Ordering::Equal,
+            }
+        }
+    }
+
+    impl std::cmp::Eq for Tag {}
+
+    impl std::cmp::PartialOrd for Tag {
+        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    impl std::cmp::PartialEq for Tag {
+        fn eq(&self, other: &Self) -> bool {
+            self == other
+        }
+    }
+    res.iter_mut().for_each(|(_, messages)| {
+        messages.sort_by(|a, b| {
+            use std::cmp::Ordering;
+            let date = a.timestamp.cmp(&b.timestamp);
+            let tag = a
+                .tags
+                .get(0)
+                .cloned()
+                .unwrap_or_default()
+                .cmp(&b.tags.get(0).cloned().unwrap_or_default());
+            match (tag, date) {
+                (Ordering::Equal, d) => d,
+                (t, _) => t,
+            }
+        })
     });
 
     Ok(res)
