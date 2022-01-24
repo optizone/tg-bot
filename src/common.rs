@@ -1,10 +1,11 @@
 use teloxide::{prelude::*, RequestError};
 
-use crate::{db_utils, ALLIAS_REGIONS, ALL_TAGS};
+use crate::{db_utils, ALLIAS_REGIONS, ALL_REGIONS, ALL_TAGS};
 use std::collections::HashSet;
 
 #[derive(Debug)]
 pub enum Regions<'t> {
+    Country(Vec<&'t str>),
     Regions(Vec<&'t str>),
     BadRegion {
         region: &'t str,
@@ -19,7 +20,7 @@ pub fn extract_regions<'t>(regions: &'t str) -> Regions<'t> {
         if let Some(&reg) = alias_regions.get(region.to_lowercase().as_str()) {
             res.push(reg);
         } else if region.to_lowercase() == "страна" {
-            continue;
+            return Regions::Country(ALL_REGIONS.read().unwrap().iter().copied().collect());
         } else {
             let mut it = alias_regions
                 .iter()

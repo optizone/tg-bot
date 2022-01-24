@@ -48,7 +48,7 @@ pub struct NewMessage {
     pub tags: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Message {
     pub _id: ObjectId,
     #[serde(
@@ -72,6 +72,8 @@ pub struct InsertableMessage {
 }
 
 pub struct MessageFilter {
+    pub user_id: i64,
+    pub since: Duration,
     pub duration: Duration,
     pub regions: Vec<String>,
     pub tags: Vec<String>,

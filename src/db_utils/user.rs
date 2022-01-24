@@ -55,19 +55,25 @@ impl User {
                 /deldb <id>\n\
                 /cleandb <суток оставить>\n\
                 /statdb [OFFSET, по умолчанию \'+03:00\' (Мск)]\n\
-                Регионы [часов] [теги]"),
-            UserGroup::Registered => Ok("Регионы [часов] [теги]"),
+                /add_user_regions <id> <регионы через пробел или страна>\n\
+                /del_user_regions <id> <регионы через пробел или страна>\n\
+                Регионы [часов назад] [количество часов (можно опустить)] [теги]"),
+            UserGroup::Registered => {
+                Ok("Регионы [часов] [количество часов (можно опустить)] [теги]")
+            }
             UserGroup::Unregistered => Ok("Тестовый эхо-бот"),
         }
     }
 
-    // pub async fn get_regions(&self) -> Result<Vec<Region>> {
-    //     Ok(super::db::get_regions(&self.client).await?)
-    // }
+    pub async fn add_user_regions(&self, id: i64, regions: Vec<String>) -> Result<()> {
+        self.try_admin().await?;
+        Ok(super::db::add_user_regions(&self.client, id, regions).await?)
+    }
 
-    // pub async fn get_tags(&self) -> Result<HashSet<String>> {
-    //     Ok(super::db::get_tags(&self.client).await?)
-    // }
+    pub async fn del_user_regions(&self, id: i64, regions: Vec<String>) -> Result<()> {
+        self.try_admin().await?;
+        Ok(super::db::del_user_regions(&self.client, id, regions).await?)
+    }
 
     pub async fn list_users(&self, groups: Vec<UserGroup>) -> Result<Vec<super::models::User>> {
         self.try_admin().await?;

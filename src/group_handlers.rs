@@ -35,12 +35,13 @@ async fn chat(
 ) -> TransitionOut<Dialogue> {
     let chat = cx.requester.get_chat(cx.chat_id()).await?;
     let text = cx.update.text();
-    let (text, respond_to) = match handle_chat(&mut state, chat.id, text, cx.update.id).await {
+    let (text, respond_to, pin) = match handle_chat(&mut state, chat.id, text, cx.update.id).await {
         Ok(HandleChat::Saved {
             n_messages,
             regions,
             tags,
         }) => {
+            let n = state.n;
             state.n = 0;
             let regions = if regions.len() > 1 {
                 format!("[{}]", regions.join(", "))
@@ -52,40 +53,73 @@ async fn chat(
             } else {
                 String::new()
             };
-            (
-                Some(format!("Сохранено [{}]\n{}{}", n_messages, regions, tags)),
-                None,
-            )
+            if n == 0 {
+                (
+                    Some("⚠️Нет сообщений для сохранения⚠️".to_string()),
+                    None,
+                    true,
+                )
+            } else {
+                (
+                    Some(format!("Сохранено [{}]\n{}{}", n_messages, regions, tags)),
+                    None,
+                    false,
+                )
+            }
         }
         Ok(HandleChat::Remembered(id)) => {
             state.n += 1;
-            (Some(format!("Принял {}", state.n)), Some(id))
+            (Some(format!("Принял {}", state.n)), Some(id), false)
         }
-        Ok(HandleChat::Ignored(id)) => (Some("⚠️Проигнорированно⚠️".to_string()), Some(id)),
-        Err(e @ Error::BadRegion { .. }) => (Some(e.to_string()), None),
-        Err(e @ Error::BadTag(_)) => (Some(e.to_string()), None),
+        Ok(HandleChat::Ignored(id)) => (Some("⚠️Проигнорированно⚠️".to_string()), Some(id), true),
+        Err(e @ Error::BadRegion { .. }) => (Some(e.to_string()), Some(cx.update.id), true),
+        Err(e @ Error::BadTag(_)) => (Some(e.to_string()), Some(cx.update.id), true),
         Err(e) => {
             log::error!(
                 "Unreachable branch while handling chat message: {:?}. Error: {}",
                 text,
                 e.to_string()
             );
-            (Some(e.to_string()), None)
+            (Some(e.to_string()), Some(cx.update.id), true)
         }
     };
 
-    match (text, respond_to) {
-        (Some(t), Some(_)) => {
-            while let Err(teloxide::RequestError::RetryAfter(secs)) = cx.reply_to(&t).await {
-                tokio::time::sleep(Duration::from_secs(secs as u64)).await;
+    let id = match (text, respond_to) {
+        (Some(t), Some(_)) => loop {
+            match cx.reply_to(&t).await {
+                Ok(m) => break Some(m.id),
+                Err(teloxide::RequestError::RetryAfter(secs)) => {
+                    tokio::time::sleep(Duration::from_secs(secs as u64)).await
+                }
+                Err(e) => {
+                    log::error!("{}", e.to_string());
+                    break None;
+                }
             }
-        }
-        (Some(t), None) => {
-            while let Err(teloxide::RequestError::RetryAfter(secs)) = cx.answer(&t).await {
-                tokio::time::sleep(Duration::from_secs(secs as u64)).await;
+        },
+        (Some(t), None) => loop {
+            match cx.answer(&t).await {
+                Ok(m) => break Some(m.id),
+                Err(teloxide::RequestError::RetryAfter(secs)) => {
+                    tokio::time::sleep(Duration::from_secs(secs as u64)).await
+                }
+                Err(e) => {
+                    log::error!("{}", e.to_string());
+                    break None;
+                }
             }
-        }
+        },
         _ => unreachable!(),
+    };
+
+    if pin {
+        if let Some(id) = id {
+            while let Err(teloxide::RequestError::RetryAfter(secs)) =
+                cx.requester.pin_chat_message(cx.update.chat_id(), id).await
+            {
+                tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
+            }
+        }
     }
 
     next(state)
@@ -118,6 +152,7 @@ async fn handle_chat<'t>(
     let regions = match regions {
         Some(regions) => match extract_regions(regions) {
             Regions::Regions(regions) if !regions.is_empty() => Some(regions),
+            Regions::Country(_) => None,
             Regions::Regions(_) => None,
             Regions::BadRegion { .. } => None,
         },

@@ -68,16 +68,6 @@ async fn run() {
     .await
     .expect("Can't parse MONGODB_URI as ClientOptions");
 
-    // options.credential = Some(
-    //     Credential::builder()
-    //         // .username(std::env::var("MONGODB_CREDENTIAL_USER").ok())
-    //         .source(std::env::var("MONGODB_CREDENTIAL_SOURCE").ok())
-    //         // .password(std::env::var("MONGODB_CREDENTIAL_PASSWORD").ok())
-    //         // .mechanism(std::env::var("MONGODB_CREDENTIAL_MECHANISM").ok())
-    //         // .mechanism_properties(std::env::var("MONGODB_CREDENTIAL_PROPERTIES").ok())
-    //         .build(),
-    // );
-
     options.min_pool_size = std::env::var("MONGODB_POLL_MIN_CONNECTIONS").ok().map(|s| {
         s.parse()
             .expect("Can't parse MONGODB_POLL_MIN_CONNECTIONS as u32")
@@ -190,6 +180,9 @@ async fn run() {
         let text = cx.update.text();
         let private = chat.is_private();
         let chat_in_table = ALL_CHATS.read().await.contains(&cx.chat_id());
+        let default = next::<_, _, RequestError>(Dialogue::from(Echo))
+            .map_err(|_| unreachable!())
+            .unwrap();
 
         match cx.update.kind {
             MessageKind::Common(_) => {}
@@ -269,7 +262,7 @@ async fn run() {
                     line = line!(),
                 )
             })
-            .unwrap(),
+            .unwrap_or(default),
             (false, Dialogue::Echo(_)) if !chat_in_table => dialogue
                 .react(cx, String::new())
                 .await
@@ -281,7 +274,7 @@ async fn run() {
                         line = line!(),
                     )
                 })
-                .unwrap(),
+                .unwrap_or(default),
             (false, Dialogue::Echo(_)) if chat_in_table => {
                 Dialogue::from(Chat::new(Arc::clone(mongo_client)))
                     .react(cx, String::new())
@@ -294,7 +287,7 @@ async fn run() {
                             line = line!(),
                         )
                     })
-                    .unwrap()
+                    .unwrap_or(default)
             }
             (true, Dialogue::Private(_)) => dialogue
                 .react(cx, String::new())
@@ -307,7 +300,7 @@ async fn run() {
                         line = line!(),
                     )
                 })
-                .unwrap(),
+                .unwrap_or(default),
             (false, Dialogue::Chat(_)) if chat_in_table => dialogue
                 .react(cx, String::new())
                 .await
@@ -319,7 +312,7 @@ async fn run() {
                         line = line!(),
                     )
                 })
-                .unwrap(),
+                .unwrap_or(default),
             (false, Dialogue::Chat(_)) if !chat_in_table => Dialogue::from(Echo)
                 .react(cx, String::new())
                 .await
@@ -331,7 +324,7 @@ async fn run() {
                         line = line!(),
                     )
                 })
-                .unwrap(),
+                .unwrap_or(default),
             _ => unreachable!(),
         }
     })

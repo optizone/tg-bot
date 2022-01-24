@@ -7,10 +7,10 @@ use teloxide::prelude::*;
 
 lazy_static::lazy_static! {
     static ref GET_REGEX: regex::Regex
-        = regex::Regex::new(r"^(?P<regions>([\p{L}-]{2,}\s*)+([\p{L}-]{2,})?)?(?P<duration>\s+\d+)?\s*(?P<tags>(\p{L}\s+)*\p{L}$)?$")
+        = regex::Regex::new(r"^(?P<regions>([\p{L}-]{2,}\s*)+([\p{L}-]{2,})?)?(?P<since>\s+\d+)?(?P<duration>\s+\d+)?\s*(?P<tags>(\p{L}\s+)*\p{L}$)?$")
             .expect("Cant create a regex");
     static ref CMD_REGEX: regex::Regex
-        = regex::Regex::new(r"^/(?P<start>start$)|(?P<help>help$)|(?P<list_users>list_users$)|(?P<add_user>add_user\s+-?\d+(\s+Admin)?$)|(?P<del_user>del_user\s+-?\d+$)|(?P<list_chats>list_chats$)|(?P<add_chat>add_chat\s+-?\d+$)|(?P<del_chat>del_chat\s+-?\d+$)|(?P<listdb>listdb(\s+\d{2}\.\d{2}\.\d{2}(\s+[+\-]\d{2}:\d{2})?)?$)|(?P<deldb>deldb\s+[0-9a-zA-Z]{24}$)|(?P<cleandb>cleandb\s+\d+$)|(?P<statdb>statdb(\s+[+\-]\d{2}:\d{2})?$)")
+        = regex::Regex::new(r"^/(?P<start>start$)|(?P<help>help$)|(?P<list_users>list_users$)|(?P<add_user>add_user\s+-?\d+(\s+Admin)?$)|(?P<del_user>del_user\s+-?\d+$)|(?P<add_user_regions>add_user_regions\s+-?\d+(\s+\w+)*$)|(?P<del_user_regions>del_user_regions\s+-?\d+(\s+\w+)*$)|(?P<list_chats>list_chats$)|(?P<add_chat>add_chat\s+-?\d+$)|(?P<del_chat>del_chat\s+-?\d+$)|(?P<listdb>listdb(\s+\d{2}\.\d{2}\.\d{2}(\s+[+\-]\d{2}:\d{2})?)?$)|(?P<deldb>deldb\s+[0-9a-zA-Z]{24}$)|(?P<cleandb>cleandb\s+\d+$)|(?P<statdb>statdb(\s+[+\-]\d{2}:\d{2})?$)")
             .expect("Cant create a regex");
 }
 
@@ -32,6 +32,14 @@ impl Private {
 
 #[teloxide(subtransition)]
 async fn private(
+    state: Private,
+    cx: TransitionIn<AutoSend<Bot>>,
+    s: String,
+) -> TransitionOut<Dialogue> {
+    private_impl(state, cx, s).await
+}
+
+async fn private_impl(
     state: Private,
     cx: TransitionIn<AutoSend<Bot>>,
     _: String,
@@ -103,6 +111,86 @@ async fn private(
                         format!("не получилось удалить пользователя. Ошибка: {}", e)
                     });
                 send_str(&cx, r.as_str()).await;
+            }
+        } else if let Some(add_user_regions) = c.name("add_user_regions").map(|m| m.as_str()) {
+            let mut split = add_user_regions.split_whitespace();
+            let id = split
+                .nth(1)
+                .unwrap_or_default()
+                .parse::<i64>()
+                .unwrap_or_default();
+            let regs = split.next().unwrap();
+            let len = add_user_regions.len()
+                - (regs.as_ptr() as usize - add_user_regions.as_ptr() as usize);
+            let regions = unsafe {
+                std::str::from_utf8_unchecked(std::slice::from_raw_parts(regs.as_ptr(), len))
+            };
+            if id == 0 {
+                send_str(&cx, "Непонятный id").await;
+            } else {
+                match extract_regions(regions) {
+                    Regions::Regions(r) | Regions::Country(r) => {
+                        if let Err(e) = state
+                            .0
+                            .add_user_regions(id, r.iter().map(|&s| s.into()).collect())
+                            .await
+                        {
+                            send_str(
+                                &cx,
+                                format!("Не получилось изменить пользователя. Ошибка: {}", e)
+                                    .as_str(),
+                            )
+                            .await;
+                        }
+                    }
+                    Regions::BadRegion { region, matches } => {
+                        let error = Error::BadRegion {
+                            region: region.into(),
+                            matches,
+                        };
+                        send_str(&cx, error.to_string().as_str()).await;
+                    }
+                }
+            }
+        } else if let Some(del_user_regions) = c.name("del_user_regions").map(|m| m.as_str()) {
+            let mut split = del_user_regions.split_whitespace();
+            let id = split
+                .nth(1)
+                .unwrap_or_default()
+                .parse::<i64>()
+                .unwrap_or_default();
+            let regs = split.next().unwrap();
+            let len = del_user_regions.len()
+                - (regs.as_ptr() as usize - del_user_regions.as_ptr() as usize);
+            let regions = unsafe {
+                std::str::from_utf8_unchecked(std::slice::from_raw_parts(regs.as_ptr(), len))
+            };
+            if id == 0 {
+                send_str(&cx, "Непонятный id").await;
+            } else {
+                match extract_regions(regions) {
+                    Regions::Regions(r) | Regions::Country(r) => {
+                        if let Err(e) = state
+                            .0
+                            .del_user_regions(id, r.iter().map(|&s| s.into()).collect())
+                            .await
+                        {
+                            send_str(
+                                &cx,
+                                format!("Не получилось изменить пользователя. Ошибка: {}", e)
+                                    .as_str(),
+                            )
+                            .await;
+                        }
+                    }
+                    Regions::BadRegion { region, matches } => {
+                        let error = Error::BadRegion {
+                            region: region.into(),
+                            matches,
+                        };
+                        send_str(&cx, error.to_string().as_str()).await;
+                    }
+                }
             }
         } else if let Some(_) = c.name("list_chats").map(|m| m.as_str()) {
             match state.0.list_chats().await {
@@ -312,20 +400,20 @@ async fn private(
 
     enum _Message {
         Message(BTreeMap<String, Vec<db_utils::models::Message>>),
-        String(String),
+        Error(String),
     }
     let messages = match handle_private(&state, text.unwrap_or_default()).await {
         Ok(messages) => _Message::Message(messages),
-        Err(e) => _Message::String(e.to_string()),
+        Err(e) => _Message::Error(e.to_string()),
     };
     match messages {
         _Message::Message(messages) => {
-            for (region, messages) in messages.iter().filter(|(r, _)| r.as_str() != "РФ") {
-                send_str(&cx, format!("Регион: {}", region).as_str()).await;
-                send_messages(&cx, messages.clone(), false).await;
-            }
             for messages in messages.get(&"РФ".to_string()) {
                 send_str(&cx, format!("Регион: РФ").as_str()).await;
+                send_messages(&cx, messages.clone(), false).await;
+            }
+            for (region, messages) in messages.iter().filter(|(r, _)| r.as_str() != "РФ") {
+                send_str(&cx, format!("Регион: {}", region).as_str()).await;
                 send_messages(&cx, messages.clone(), false).await;
             }
             while let Err(teloxide::RequestError::RetryAfter(secs)) =
@@ -334,8 +422,12 @@ async fn private(
                 tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
             }
         }
-        _Message::String(string) => {
-            send_str(&cx, string.as_str()).await;
+        _Message::Error(string) => {
+            while let Err(teloxide::RequestError::RetryAfter(secs)) =
+                cx.reply_to(string.as_str()).await
+            {
+                tokio::time::sleep(std::time::Duration::from_secs(secs as u64)).await;
+            }
         }
     }
 
@@ -346,9 +438,14 @@ async fn handle_private(
     state: &Private,
     text: &str,
 ) -> Result<BTreeMap<String, Vec<db_utils::models::Message>>, Error> {
-    let (regions, duration, tags) = match GET_REGEX.captures(text) {
+    let (regions, since, duration, tags) = match GET_REGEX.captures(text) {
         Some(c) => (
             c.name("regions").map(|r| r.as_str()),
+            c.name("since")
+                .map(|d| match d.as_str().trim().parse::<u64>() {
+                    Ok(hours) => Ok(Duration::hours(hours as i64)),
+                    Err(e) => Err(e),
+                }),
             c.name("duration")
                 .map(|d| match d.as_str().trim().parse::<u64>() {
                     Ok(hours) => Ok(Duration::hours(hours as i64)),
@@ -356,12 +453,12 @@ async fn handle_private(
                 }),
             c.name("tags").map(|t| t.as_str()),
         ),
-        None => (None, None, None),
+        None => (None, None, None, None),
     };
 
     let regions = match regions {
         Some(regions) => match extract_regions(regions) {
-            Regions::Regions(regions) => regions,
+            Regions::Regions(regions) | Regions::Country(regions) => regions,
             Regions::BadRegion { region, matches } => {
                 return Err(Error::BadRegion {
                     region: region.into(),
@@ -372,10 +469,16 @@ async fn handle_private(
         _ => return Err(Error::NoRegions),
     };
 
-    let duration = match duration {
+    let since = match since {
         Some(Ok(d)) => d,
         Some(Err(e)) => return Err(Error::DurationParseError(e)),
         None => Duration::hours(24),
+    };
+
+    let duration = match duration {
+        Some(Ok(d)) => d,
+        Some(Err(e)) => return Err(Error::DurationParseError(e)),
+        None => since,
     };
 
     let tags = match tags {
@@ -387,6 +490,8 @@ async fn handle_private(
     };
 
     let filter = db_utils::models::MessageFilter {
+        user_id: state.0.id,
+        since,
         duration,
         regions: regions.iter().map(|r| r.to_string()).collect(),
         tags: tags.iter().map(|t| t.to_string()).collect(),
@@ -397,36 +502,41 @@ async fn handle_private(
     if messages.is_empty() {
         return Err(Error::NoMessages {
             regions: regions.iter().map(|&i| i.into()).collect(),
+            since,
             duration,
             tags: tags.iter().map(|&i| i.into()).collect(),
         });
     }
+
     let mut res = BTreeMap::<String, Vec<db_utils::models::Message>>::new();
     messages.iter().for_each(|m| {
         m.regions
             .iter()
             .for_each(|r| res.entry(r.clone()).or_default().push(m.clone()))
     });
+
     struct Tag(&'static str);
     impl std::cmp::Ord for Tag {
         fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            match (self.0.chars().next(), other.0.chars().next()) {
-                (Some('ч'), Some('ч')) => std::cmp::Ordering::Equal,
-                (Some('ч'), Some(_)) => std::cmp::Ordering::Less,
+            let order = ['ч', 'п', 'у', 'с'];
+            let o = other.0.chars().next().unwrap_or('ч');
+            let s = self.0.chars().next().unwrap_or('ч');
 
-                (Some('п'), Some('ч')) => std::cmp::Ordering::Greater,
-                (Some('п'), Some('п')) => std::cmp::Ordering::Equal,
-                (Some('п'), Some(_)) => std::cmp::Ordering::Less,
+            let s = order
+                .iter()
+                .enumerate()
+                .find(|(_, &c)| c == s)
+                .map(|(w, _)| w)
+                .unwrap_or_default();
 
-                (Some('у'), Some('у')) => std::cmp::Ordering::Equal,
-                (Some('у'), Some('с')) => std::cmp::Ordering::Less,
-                (Some('у'), Some(_)) => std::cmp::Ordering::Greater,
+            let o = order
+                .iter()
+                .enumerate()
+                .find(|(_, &c)| c == o)
+                .map(|(w, _)| w)
+                .unwrap_or_default();
 
-                (Some('с'), Some('с')) => std::cmp::Ordering::Equal,
-                (Some('с'), Some(_)) => std::cmp::Ordering::Greater,
-
-                _ => std::cmp::Ordering::Equal,
-            }
+            s.cmp(&o)
         }
     }
 

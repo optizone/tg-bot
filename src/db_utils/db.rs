@@ -5,7 +5,7 @@ use bson::oid::ObjectId;
 use bson::Document;
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use futures::StreamExt;
-use mongodb::options::FindOptions;
+use mongodb::options::{FindOptions, UpdateOptions};
 use mongodb::Client;
 use mongodb::{error::Result as DbResult, Cursor};
 use serde::Deserialize;
@@ -155,7 +155,7 @@ pub async fn list_users(client: &Client, groups: Vec<UserGroup>) -> DbResult<Cur
             filter,
             FindOptions::builder()
                 .sort(mongodb::bson::doc! {
-                    "region": 1,
+                    "regions": 1,
                     "timestamp": 1,
                 })
                 .build(),
@@ -315,7 +315,7 @@ pub async fn list_messages(
             filter,
             FindOptions::builder()
                 .sort(mongodb::bson::doc! {
-                    "region": 1,
+                    "regions": 1,
                     "timestamp": 1,
                 })
                 .build(),
@@ -467,21 +467,83 @@ pub async fn insert_messages(
         .map(|_| ())?)
 }
 
+pub async fn add_user_regions(client: &Client, id: i64, regions: Vec<String>) -> DbResult<()> {
+    client
+        .database(DB_NAME)
+        .collection::<mongodb::bson::Document>(USERS_COLLECTION_NAME)
+        .update_one(
+            mongodb::bson::doc! { "id": id },
+            mongodb::bson::doc! { "$push": { "allowed_regions": { "$each": regions } } },
+            UpdateOptions::builder().upsert(true).build(),
+        )
+        .await?;
+    Ok(())
+}
+
+pub async fn del_user_regions(client: &Client, id: i64, regions: Vec<String>) -> DbResult<()> {
+    client
+        .database(DB_NAME)
+        .collection::<mongodb::bson::Document>(USERS_COLLECTION_NAME)
+        .update_one(
+            mongodb::bson::doc! { "id": id },
+            mongodb::bson::doc! { "$pull": { "allowed_regions": { "$in": regions } } },
+            UpdateOptions::builder().upsert(true).build(),
+        )
+        .await?;
+    Ok(())
+}
+
 pub async fn get_messages(
     client: &Client,
     filter: MessageFilter,
 ) -> super::error::Result<Vec<Message>> {
     let now = Utc::now();
-    let after = now.checked_sub_signed(filter.duration.clone()).unwrap_or_else(|| {
+    let after = now.checked_sub_signed(filter.since.clone()).unwrap_or_else(|| {
+        log::error!(target: "db_utils::db::get_messages", "Can't calculate timestamp with duration {:?}", &filter.since);
+        now
+    });
+
+    let before = after.checked_add_signed(filter.duration.clone()).unwrap_or_else(|| {
         log::error!(target: "db_utils::db::get_messages", "Can't calculate timestamp with duration {:?}", &filter.duration);
         now
     });
+
+    let before: mongodb::bson::DateTime = before.into();
     let after: mongodb::bson::DateTime = after.into();
+
+    #[derive(Deserialize, Default)]
+    struct Allowed {
+        pub allowed_regions: HashSet<String>,
+    }
+
+    let allowed = client
+        .database(DB_NAME)
+        .collection::<Allowed>(USERS_COLLECTION_NAME)
+        .find_one(
+            mongodb::bson::doc! {
+                "id": filter.user_id
+            },
+            None,
+        )
+        .await?
+        .unwrap_or_default();
+
+    let regions: Vec<_> = if !filter.regions.is_empty() {
+        filter
+            .regions
+            .into_iter()
+            .filter(|r| allowed.allowed_regions.contains(r))
+            .collect()
+    } else {
+        allowed.allowed_regions.into_iter().collect()
+    };
 
     let mut doc = mongodb::bson::doc! {
         "timestamp": {
-            "$gte": after
+            "$gte": after,
+            "$lte": before
         },
+        "regions": { "$in": regions.clone() }
     };
 
     if !filter.tags.is_empty() {
@@ -493,15 +555,6 @@ pub async fn get_messages(
         );
     }
 
-    if !filter.regions.is_empty() {
-        doc.insert(
-            "regions",
-            mongodb::bson::doc! {
-                "$in": filter.regions
-            },
-        );
-    }
-
     Ok(client
         .database(DB_NAME)
         .collection::<Message>(MESSAGES_COLLECTION_NAME)
@@ -509,7 +562,7 @@ pub async fn get_messages(
             doc,
             FindOptions::builder()
                 .sort(mongodb::bson::doc! {
-                    "region": 1,
+                    "regions": 1,
                     "timestamp": 1,
                 })
                 .build(),
@@ -518,5 +571,15 @@ pub async fn get_messages(
         .collect::<Vec<_>>()
         .await
         .into_iter()
-        .collect::<Result<Vec<_>, _>>()?)
+        .collect::<Result<Vec<_>, _>>()
+        .map(|mut messages| {
+            for message in &mut messages {
+                let regs = std::mem::replace(&mut message.regions, Vec::new());
+                message.regions = regs
+                    .into_iter()
+                    .filter(|region| regions.contains(region))
+                    .collect();
+            }
+            messages
+        })?)
 }

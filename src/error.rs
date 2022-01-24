@@ -21,6 +21,7 @@ pub enum Error {
     NoMessages {
         regions: Vec<String>,
         duration: Duration,
+        since: Duration,
         tags: Vec<String>,
     },
 
