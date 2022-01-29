@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use bson::oid::ObjectId;
 use bson::{doc, Document};
-use chrono::{DateTime, Duration, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, Duration, NaiveTime, Utc};
 use futures::StreamExt;
 use mongodb::options::{FindOptions, UpdateOptions};
 use mongodb::Client;
@@ -536,11 +536,8 @@ pub async fn get_messages(
     let now = Utc::now();
     let mut result = Vec::with_capacity(16);
     for (region, timestamp) in regions.iter().map(|r| {
-        let timestamp = *last_time.get(*r).unwrap_or(&DateTime::<Utc>::from_utc(
-            NaiveDateTime::from_timestamp(0, 0),
-            Utc,
-        ));
-        (r, timestamp)
+        let today = *last_time.get(*r).unwrap_or(&Utc::today().and_hms(0, 0, 0));
+        (r, today)
     }) {
         let (after, before) = {
             let now = Utc::now();
