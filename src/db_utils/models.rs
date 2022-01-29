@@ -73,8 +73,18 @@ pub struct InsertableMessage {
 
 pub struct MessageFilter {
     pub user_id: i64,
-    pub since: Duration,
-    pub duration: Duration,
+    pub period: Option<(Duration, Duration)>,
     pub regions: Vec<String>,
     pub tags: Vec<String>,
+}
+#[derive(Deserialize, Serialize, Default)]
+pub struct LatestRequests {
+    pub requests: Vec<LatestRequest>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct LatestRequest {
+    pub region: String,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }

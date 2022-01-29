@@ -1,19 +1,19 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 
 use bson::oid::ObjectId;
-use bson::Document;
-use chrono::{DateTime, Duration, NaiveTime, Utc};
+use bson::{doc, Document};
+use chrono::{DateTime, Duration, NaiveDateTime, NaiveTime, Utc};
 use futures::StreamExt;
 use mongodb::options::{FindOptions, UpdateOptions};
 use mongodb::Client;
 use mongodb::{error::Result as DbResult, Cursor};
 use serde::Deserialize;
 
-use crate::db_utils::models::DbStat;
+use crate::db_utils::models::{DbStat, LatestRequests};
 use crate::db_utils::{
     CHATS_COLLECTION_NAME, DB_NAME, REGIONS_COLLECTION_NAME, TAGS_COLLECTION_NAME,
-    USERS_COLLECTION_NAME,
+    USERS_COLLECTION_NAME, USER_LATEST_REQUESTS_COLLECTION_NAME,
 };
 
 use super::models::{InsertableMessage, MessageFilter, NewMessage, UserGroup};
@@ -497,26 +497,28 @@ pub async fn get_messages(
     client: &Client,
     filter: MessageFilter,
 ) -> super::error::Result<Vec<Message>> {
-    let now = Utc::now();
-    let after = now.checked_sub_signed(filter.since.clone()).unwrap_or_else(|| {
-        log::error!(target: "db_utils::db::get_messages", "Can't calculate timestamp with duration {:?}", &filter.since);
-        now
-    });
-
-    let before = after.checked_add_signed(filter.duration.clone()).unwrap_or_else(|| {
-        log::error!(target: "db_utils::db::get_messages", "Can't calculate timestamp with duration {:?}", &filter.duration);
-        now
-    });
-
-    let before: mongodb::bson::DateTime = before.into();
-    let after: mongodb::bson::DateTime = after.into();
+    let last_time = client
+        .database(DB_NAME)
+        .collection::<LatestRequests>(USER_LATEST_REQUESTS_COLLECTION_NAME)
+        .find_one(
+            doc! {
+                "id": filter.user_id
+            },
+            None,
+        )
+        .await?
+        .unwrap_or_default()
+        .requests
+        .into_iter()
+        .map(|r| (r.region, r.timestamp))
+        .collect::<HashMap<_, _>>();
 
     #[derive(Deserialize, Default)]
     struct Allowed {
         pub allowed_regions: HashSet<String>,
     }
 
-    let allowed = client
+    let regions = client
         .database(DB_NAME)
         .collection::<Allowed>(USERS_COLLECTION_NAME)
         .find_one(
@@ -526,60 +528,99 @@ pub async fn get_messages(
             None,
         )
         .await?
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .allowed_regions;
+    let f_regions = filter.regions.into_iter().collect::<HashSet<_>>();
+    let regions = regions.intersection(&f_regions).collect::<Vec<_>>();
 
-    let regions: Vec<_> = if !filter.regions.is_empty() {
-        filter
-            .regions
-            .into_iter()
-            .filter(|r| allowed.allowed_regions.contains(r))
-            .collect()
-    } else {
-        allowed.allowed_regions.into_iter().collect()
-    };
+    let now = Utc::now();
+    let mut result = Vec::with_capacity(16);
+    for (region, timestamp) in regions.iter().map(|r| {
+        let timestamp = *last_time.get(*r).unwrap_or(&DateTime::<Utc>::from_utc(
+            NaiveDateTime::from_timestamp(0, 0),
+            Utc,
+        ));
+        (r, timestamp)
+    }) {
+        let (after, before) = {
+            let now = Utc::now();
+            if let Some((since, duration)) = filter.period {
+                let after = now.checked_sub_signed(since).unwrap_or_else(|| {
+                    log::error!(target: "db_utils::db::get_messages", "Can't calculate timestamp with duration {:?}", &since);
+                    now
+                });
 
-    let mut doc = mongodb::bson::doc! {
-        "timestamp": {
-            "$gte": after,
-            "$lte": before
-        },
-        "regions": { "$in": regions.clone() }
-    };
+                let before = after.checked_add_signed(duration).unwrap_or_else(|| {
+                    log::error!(target: "db_utils::db::get_messages", "Can't calculate timestamp with duration {:?}", &duration);
+                    now
+                });
 
-    if !filter.tags.is_empty() {
-        doc.insert(
-            "tags",
-            mongodb::bson::doc! {
-                "$in": filter.tags
+                (after, before)
+            } else {
+                (timestamp, Utc::now())
+            }
+        };
+
+        let before: mongodb::bson::DateTime = before.into();
+        let after: mongodb::bson::DateTime = after.into();
+
+        let mut doc = doc! {
+            "timestamp": {
+                "$gte": after,
+                "$lte": before
             },
-        );
+            "regions": region
+        };
+
+        if !filter.tags.is_empty() {
+            doc.insert(
+                "tags",
+                mongodb::bson::doc! {
+                    "$in": filter.tags.clone()
+                },
+            );
+        }
+
+        let res = client
+            .database(DB_NAME)
+            .collection::<Message>(MESSAGES_COLLECTION_NAME)
+            .find(doc, None)
+            .await?
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .map(|mut messages| {
+                for message in &mut messages {
+                    let regs = std::mem::replace(&mut message.regions, Vec::new());
+                    message.regions = regs
+                        .into_iter()
+                        .filter(|region| regions.contains(&region))
+                        .collect();
+                }
+                messages
+            })?;
+        result.extend(res);
+
+        client
+            .database(DB_NAME)
+            .collection::<Document>(USER_LATEST_REQUESTS_COLLECTION_NAME)
+            .update_one(
+                doc! { "id": filter.user_id },
+                doc! { "$pull": { "requests": { "region": region } } },
+                None,
+            )
+            .await?;
+        client
+            .database(DB_NAME)
+            .collection::<Document>(USER_LATEST_REQUESTS_COLLECTION_NAME)
+            .update_one(
+                doc! { "id": filter.user_id },
+                doc! { "$push": { "requests": { "region": region, "timestamp": now } } },
+                UpdateOptions::builder().upsert(true).build(),
+            )
+            .await?;
     }
 
-    Ok(client
-        .database(DB_NAME)
-        .collection::<Message>(MESSAGES_COLLECTION_NAME)
-        .find(
-            doc,
-            FindOptions::builder()
-                .sort(mongodb::bson::doc! {
-                    "regions": 1,
-                    "timestamp": 1,
-                })
-                .build(),
-        )
-        .await?
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .map(|mut messages| {
-            for message in &mut messages {
-                let regs = std::mem::replace(&mut message.regions, Vec::new());
-                message.regions = regs
-                    .into_iter()
-                    .filter(|region| regions.contains(region))
-                    .collect();
-            }
-            messages
-        })?)
+    Ok(result)
 }

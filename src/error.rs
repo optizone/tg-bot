@@ -20,8 +20,7 @@ pub enum Error {
     #[error("По такому запросу нет сообщений 🔎❌")]
     NoMessages {
         regions: Vec<String>,
-        duration: Duration,
-        since: Duration,
+        period: Option<(Duration, Duration)>,
         tags: Vec<String>,
     },
 

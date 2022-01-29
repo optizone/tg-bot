@@ -470,16 +470,18 @@ async fn handle_private(
     };
 
     let since = match since {
-        Some(Ok(d)) => d,
+        Some(Ok(d)) => Some(d),
         Some(Err(e)) => return Err(Error::DurationParseError(e)),
-        None => Duration::hours(24),
+        None => None,
     };
 
     let duration = match duration {
-        Some(Ok(d)) => d,
+        Some(Ok(d)) => Some(d),
         Some(Err(e)) => return Err(Error::DurationParseError(e)),
         None => since,
     };
+
+    let period = since.map(|v| (v, duration.unwrap()));
 
     let tags = match tags {
         Some(tags) => match extract_tags(tags) {
@@ -491,8 +493,7 @@ async fn handle_private(
 
     let filter = db_utils::models::MessageFilter {
         user_id: state.0.id,
-        since,
-        duration,
+        period,
         regions: regions.iter().map(|r| r.to_string()).collect(),
         tags: tags.iter().map(|t| t.to_string()).collect(),
     };
@@ -502,8 +503,7 @@ async fn handle_private(
     if messages.is_empty() {
         return Err(Error::NoMessages {
             regions: regions.iter().map(|&i| i.into()).collect(),
-            since,
-            duration,
+            period,
             tags: tags.iter().map(|&i| i.into()).collect(),
         });
     }

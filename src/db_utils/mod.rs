@@ -13,3 +13,4 @@ pub(self) const TAGS_COLLECTION_NAME: &str = "tags";
 pub(self) const REGIONS_COLLECTION_NAME: &str = "regions";
 pub(self) const USERS_COLLECTION_NAME: &str = "users";
 pub(self) const CHATS_COLLECTION_NAME: &str = "chats";
+pub(self) const USER_LATEST_REQUESTS_COLLECTION_NAME: &str = "user_latest_requests";
