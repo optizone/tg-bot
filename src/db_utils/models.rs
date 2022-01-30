@@ -48,7 +48,7 @@ pub struct NewMessage {
     pub tags: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Message {
     pub _id: ObjectId,
     #[serde(

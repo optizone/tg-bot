@@ -496,7 +496,7 @@ pub async fn del_user_regions(client: &Client, id: i64, regions: Vec<String>) ->
 pub async fn get_messages(
     client: &Client,
     filter: MessageFilter,
-) -> super::error::Result<Vec<Message>> {
+) -> super::error::Result<HashSet<Message>> {
     let last_time = client
         .database(DB_NAME)
         .collection::<LatestRequests>(USER_LATEST_REQUESTS_COLLECTION_NAME)
@@ -534,7 +534,7 @@ pub async fn get_messages(
     let regions = regions.intersection(&f_regions).collect::<Vec<_>>();
 
     let now = Utc::now();
-    let mut result = Vec::with_capacity(16);
+    let mut result = HashSet::with_capacity(16);
     for (region, timestamp) in regions.iter().map(|r| {
         let today = *last_time.get(*r).unwrap_or(&Utc::today().and_hms(0, 0, 0));
         (r, today)
@@ -597,7 +597,7 @@ pub async fn get_messages(
                 }
                 messages
             })?;
-        result.extend(res);
+        result.extend(res.into_iter());
 
         client
             .database(DB_NAME)
