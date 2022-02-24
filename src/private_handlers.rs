@@ -84,7 +84,7 @@ async fn private_impl(
             } else {
                 let r = state
                     .0
-                    .add_user(db_utils::models::User { id, group })
+                    .add_user(db_utils::models::User { id, group, allowed_regions: Vec::new() })
                     .await
                     .map(|_| format!("Добавил пользователя с id {}", id))
                     .unwrap_or_else(|e| {

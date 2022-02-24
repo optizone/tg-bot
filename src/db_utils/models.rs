@@ -32,6 +32,7 @@ pub enum UserGroup {
 pub struct User {
     pub id: i64,
     pub group: UserGroup,
+    pub allowed_regions: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Hash, PartialEq, Eq, Debug, Clone)]
